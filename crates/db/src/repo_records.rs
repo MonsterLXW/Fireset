@@ -133,6 +133,33 @@ impl Db {
         Ok(row)
     }
 
+    pub async fn upsert_experiment_overwrite(
+        &self,
+        acronym: &str,
+        name: &str,
+        description: &str,
+        source: &str,
+    ) -> Result<Experiment> {
+        let clean_acronym = acronym.trim().to_uppercase();
+        let row = sqlx::query_as::<_, Experiment>(
+            "INSERT INTO experiments (acronym, name, description, source)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (acronym) DO UPDATE SET
+                 name = CASE WHEN EXCLUDED.name <> '' THEN EXCLUDED.name ELSE experiments.name END,
+                 description = CASE WHEN EXCLUDED.description <> '' THEN EXCLUDED.description ELSE experiments.description END,
+                 source = EXCLUDED.source,
+                 updated_at = now()
+             RETURNING *",
+        )
+        .bind(&clean_acronym)
+        .bind(name.trim())
+        .bind(description.trim())
+        .bind(source)
+        .fetch_one(self.pool())
+        .await?;
+        Ok(row)
+    }
+
     pub async fn link_experiment_paper(
         &self,
         experiment_id: Uuid,

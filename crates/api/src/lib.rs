@@ -123,6 +123,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/findings/{finding_id}", patch(patch_finding))
         .route("/api/v1/pipeline/ingest", post(trigger_ingest))
         .route("/api/v1/pipeline/sheet/import", post(import_sheet))
+        .route("/api/v1/pipeline/nasa/scrape", post(scrape_nasa_experiments))
         .route("/api/v1/pipeline/status", get(pipeline_status))
         .route("/api/v1/experiments", get(list_experiments))
         .route("/api/v1/papers", get(list_papers))
@@ -522,6 +523,21 @@ async fn import_sheet(
     let ntrs = ntrs::NtrsClient::new(&st.config)?;
     let rec = ntrs.import_google_sheet_url(&st.db, &req.url).await?;
     Ok(Json(serde_json::to_value(rec).map_err(|e| Error::Pipeline(e.to_string()))?))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct NasaScrapeRequest {
+    urls: Option<Vec<(String, String)>>,
+}
+
+async fn scrape_nasa_experiments(
+    State(st): State<AppState>,
+    body: Option<Json<NasaScrapeRequest>>,
+) -> ApiResult<Json<Value>> {
+    let req = body.map(|b| b.0).unwrap_or_default();
+    let ntrs = ntrs::NtrsClient::new(&st.config)?;
+    let experiments = ntrs.sync_nasa_experiment_metadata(&st.db, req.urls).await?;
+    Ok(Json(json!({ "experiments": experiments })))
 }
 
 async fn pipeline_status(State(st): State<AppState>) -> ApiResult<Json<Value>> {

@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["web"]
 members = [
     "crates/shared",
     "crates/db",
