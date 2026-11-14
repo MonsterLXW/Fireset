@@ -197,18 +197,18 @@ CREATE TABLE ai_call_log (
     created_at  timestamptz NOT NULL DEFAULT now()
 );
 
--- ---------- seed experiments (from the program list; descriptions minimal & factual) ----------
+-- ---------- seed experiments (names, aliases and descriptions per NASA's brief; keep in sync with fix_experiment_names.sql) ----------
 INSERT INTO experiments (acronym, name, aliases, description, source) VALUES
- ('BASS',    'Burn and Splatter Suppression',                      '["BASS-I"]', 'Microgravity flammability and fire suppression experiments on the ISS.', 'seed'),
- ('BASS-II', 'BASS-Flammability Experiment II',                    '["BASS Flammability"]', 'Second BASS flammability experiment series on the ISS.', 'seed'),
- ('SAFFIRE I',  'Saffire Fireward Experiment I',   '["SAFFIRE-I","Saffire I"]', 'First Saffire outward-flame experiment with a cylindrical fuel array on the ISS.', 'seed'),
- ('SAFFIRE II', 'Saffire Fireward Experiment II',  '["SAFFIRE-II","Saffire II"]', 'Second Saffire experiment series examining buoyant and opposed-flow flames in microgravity.', 'seed'),
- ('SAFFIRE III','Saffire Fireward Experiment III', '["SAFFIRE-III","Saffire III"]','Third Saffire experiment series studying burning rate and flame spread of arrays.', 'seed'),
- ('SAME',    'Combustion Integrated Rack Smoke Experiment',        '["Smoke Masking"]', 'Measurement of soot/smoke optical properties in microgravity.', 'seed'),
- ('SAME-R',  'Smoke Aggregation and Modification Experiment - Retrieval','["SAME-Retrieval"]','Follow-up to SAME examining soot aggregation; hardware returned for analysis.', 'seed'),
- ('FLEX',    'Flammability Experiment',                            '["Fireward Experiment"]', 'Opposed-flow flame extinguishment under microgravity with variable flow and oxygen.', 'seed'),
- ('FLEX-2',  'Flammability Experiment 2',                          '["FLEX II"]', 'Second FLEX series on flame spread and extinction in variable gravity.', 'seed'),
- ('CFI',     'Combustion Integration Facility experiments',        '["Combustion Integration Facility"]','Experiments performed in the ISS Combustion Integrated Rack.', 'seed'),
- ('ACME',    ' Aerosol, Combustion, and Materials Experiment',     '["ACME-1","ACME-2","ACME-3","ACME-4","ACME-5","ACME-6","ACME6"]','Six-run series measuring smoke from burning solids in microgravity.', 'seed'),
- ('SPICE',   'Spacefire Propagation and Ingress Characterization Experiment','["SPICE-I","SPICE-II"]','Propagation of flame along wires in microgravity (single- and two-wire configurations).', 'seed'),
- ('SLICE',   'Structure and Lift-off In Controlled Experiment',    '["SLICE-I","SLICE-II"]','Turbulent jet flame structure and lift-off under controlled gravity levels.', 'seed');
+ ('BASS',        'Burning and Suppression of Solids',                        '["BASS-I"]', 'ISS study of the flammability of solid materials such as fabrics and plastics, run in the Microgravity Science Glovebox (MSG) using the fan-driven flow duct built for SPICE.', 'seed'),
+ ('BASS-II',     'Burning and Suppression of Solids II',                     '["BASS II","BASS-2"]', 'Second ISS study of the flammability of solid materials such as fabrics and plastics, run in the Microgravity Science Glovebox (MSG) flow duct.', 'seed'),
+ ('SAFFIRE I',   'Spacecraft Fire Safety Demonstration I',                   '["SAFFIRE-I","Saffire I","Saffire-I"]', 'Spacecraft Fire Safety Demonstration: flammability of solid materials in microgravity.', 'seed'),
+ ('SAFFIRE II',  'Spacecraft Fire Safety Demonstration II',                  '["SAFFIRE-II","Saffire II","Saffire-II"]', 'Spacecraft Fire Safety Demonstration: flammability of solid materials in microgravity.', 'seed'),
+ ('SAFFIRE III', 'Spacecraft Fire Safety Demonstration III',                 '["SAFFIRE-III","Saffire III","Saffire-III"]', 'Spacecraft Fire Safety Demonstration: flammability of solid materials in microgravity.', 'seed'),
+ ('SAME',        'Smoke and Aerosol Measurement Experiment',                 '[]', 'Tested fire detection in microgravity by measuring smoke.', 'seed'),
+ ('SAME-R',      'Smoke and Aerosol Measurement Experiment Reflight',        '["SAME Reflight"]', 'Reflight of SAME: tested fire detection in microgravity by measuring smoke.', 'seed'),
+ ('FLEX',        'Flame Extinguishment Experiment',                          '[]', 'Studied fire suppression by diluting the chamber atmosphere with carbon dioxide and helium while burning droplets of liquid fuel in the Multi-user Droplet Combustion Apparatus (MDCA) in the Combustion Integrated Rack (CIR).', 'seed'),
+ ('FLEX-2',      'Flame Extinguishment Experiment 2',                        '["FLEX II","FLEX 2"]', 'Burning droplets of liquid fuel in the Multi-user Droplet Combustion Apparatus (MDCA) in the Combustion Integrated Rack (CIR).', 'seed'),
+ ('CFI',         'Cool Flames Investigation',                                '["Cool Flames"]', 'Burning droplets of liquid fuel in the Multi-user Droplet Combustion Apparatus (MDCA) in the Combustion Integrated Rack (CIR).', 'seed'),
+ ('ACME',        'Advanced Combustion via Microgravity Experiments',         '["BRE","Burning Rate Emulator","CFI-G","Cool Flames Investigation with Gases","E-FIELD Flames"]', 'Six experiments on flames of gaseous fuels, all run with the same modular hardware in the Combustion Integrated Rack (CIR). Includes the Burning Rate Emulator (materials flammability in still atmospheres), Cool Flames Investigation with Gases (up to 85% oxygen) and E-FIELD Flames.', 'seed'),
+ ('SPICE',       'Smoke Point In Co-flow Experiment',                        '[]', 'Run in the Microgravity Science Glovebox (MSG) using the modular fan-driven flow duct that was built for it.', 'seed'),
+ ('SLICE',       'Structure & Liftoff In Combustion Experiment',             '["Structure and Liftoff In Combustion Experiment"]', 'Run in the Microgravity Science Glovebox (MSG) using the flow duct built for SPICE.', 'seed');

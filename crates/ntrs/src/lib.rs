@@ -6,20 +6,23 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tracing::{info, warn};
 
+/// NTRS `q` supports `+required -excluded` tokens but NOT quoted phrases or field
+/// syntax (both silently return zero), so every query is a `+word` AND form whose
+/// required words are the experiment's real name or its most distinctive terms.
 pub const DEFAULT_PROGRAM_QUERIES: &[(&str, &str)] = &[
-    ("BASS", "\"Burn and Suppression of Solids\" OR (\"BASS\" microgravity flame)"),
-    ("BASS-II", "\"BASS-II\" OR \"Burn and Suppression of Solids II\""),
-    ("SAFFIRE I", "\"Saffire\" microgravity flame spread spacecraft"),
-    ("SAFFIRE II", "\"Saffire-II\" OR \"Saffire II\" microgravity combustion"),
-    ("SAFFIRE III", "\"Saffire-III\" OR \"Saffire III\" microgravity combustion"),
-    ("SAME", "\"Smoke Aerosol Measurement Experiment\" microgravity"),
-    ("SAME-R", "\"SAME-R\" OR \"Smoke Aerosol Measurement Experiment\" retrieval"),
-    ("FLEX", "\"Flame Extinguishment Experiment\" microgravity"),
-    ("FLEX-2", "\"FLEX-2\" OR \"Flame Extinguishment Experiment-2\""),
-    ("CFI", "\"Combustion Integrated Rack\" OR \"CFI\" microgravity flammability"),
-    ("ACME", "\"Advanced Combustion via Microgravity Experiments\" OR \"ACME\" microgravity flame"),
-    ("SPICE", "\"Smoke Point In Co-flow Experiment\" OR \"SPICE\" microgravity"),
-    ("SLICE", "\"Structure and Response of Spherical Diffusion Flames\" OR \"SLICE\" microgravity"),
+    ("BASS", "+burning +suppression +solids -II"),
+    ("BASS-II", "+burning +suppression +solids +II"),
+    ("SAFFIRE I", "+saffire +I -II -III -IV -V -VI"),
+    ("SAFFIRE II", "+saffire +II"),
+    ("SAFFIRE III", "+saffire +III"),
+    ("SAME", "+smoke +aerosol +measurement +experiment"),
+    ("SAME-R", "+smoke +aerosol +reflight"),
+    ("FLEX", "+flame +extinguishment +droplet +experiment"),
+    ("FLEX-2", "+flame +extinguishment +droplet +2"),
+    ("CFI", "+cool +flames +droplet +microgravity"),
+    ("ACME", "+advanced +combustion +microgravity +experiments"),
+    ("SPICE", "+smoke +point +flame"),
+    ("SLICE", "+SLICE +flame"),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -472,6 +475,122 @@ impl NtrsClient {
         db.record_sheet_import(source_label, total_rows, ok_rows, &errors)
             .await
     }
+
+    /// Scrapes official *.nasa.gov experiment pages (or custom NASA URLs) for title/description metadata
+    /// and updates the `experiments` table.
+    pub async fn sync_nasa_experiment_metadata(
+        &self,
+        db: &Db,
+        custom_urls: Option<Vec<(String, String)>>,
+    ) -> Result<Vec<db::repo_records::Experiment>> {
+        let targets: Vec<(String, String)> = custom_urls.unwrap_or_else(|| {
+            NASA_EXPERIMENT_URLS
+                .iter()
+                .map(|(a, u)| (a.to_string(), u.to_string()))
+                .collect()
+        });
+
+        let mut updated = Vec::new();
+        for (acronym, raw_url) in targets {
+            let parsed = validate_external_https_url(&raw_url, false)?;
+            let mut scraped_name = String::new();
+            let mut scraped_desc = String::new();
+
+            if let Ok(resp) = self.http.get(parsed).send().await {
+                if resp.status().is_success() {
+                    if let Ok(html) = resp.text().await {
+                        if let Some(title) = extract_html_meta(&html, "og:title")
+                            .or_else(|| extract_html_tag(&html, "title"))
+                        {
+                            let clean = title
+                                .split('|')
+                                .next()
+                                .unwrap_or(&title)
+                                .replace("- NASA", "")
+                                .trim()
+                                .to_string();
+                            if !clean.is_empty()
+                                && !clean.eq_ignore_ascii_case("Space Station Research Explorer")
+                            {
+                                scraped_name = clean;
+                            }
+                        }
+                        if let Some(desc) = extract_html_meta(&html, "description")
+                            .or_else(|| extract_html_meta(&html, "og:description"))
+                        {
+                            let clean = desc.trim().to_string();
+                            if clean.len() > 25 {
+                                scraped_desc = clean;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !scraped_name.is_empty() || !scraped_desc.is_empty() {
+                let row = db
+                    .upsert_experiment_overwrite(&acronym, &scraped_name, &scraped_desc, "nasa_web")
+                    .await?;
+                updated.push(row);
+            } else if let Some(existing) = db.get_experiment_by_acronym(&acronym).await? {
+                updated.push(existing);
+            }
+        }
+        Ok(updated)
+    }
+}
+
+pub const NASA_EXPERIMENT_URLS: &[(&str, &str)] = &[
+    ("BASS", "https://www.nasa.gov/mission/station/research-explorer/investigation/?#id=777"),
+    ("BASS-II", "https://www.nasa.gov/mission/station/research-explorer/investigation/?#id=1030"),
+    ("SAFFIRE I", "https://www.nasa.gov/mission/station/research-explorer/investigation/?#id=1757"),
+    ("SAFFIRE II", "https://www.nasa.gov/mission/station/research-explorer/investigation/?#id=1758"),
+    ("SAFFIRE III", "https://www.nasa.gov/mission/station/research-explorer/investigation/?#id=1759"),
+    ("SAME", "https://www.nasa.gov/mission/station/research-explorer/investigation/?#id=165"),
+    ("SAME-R", "https://www.nasa.gov/mission/station/research-explorer/investigation/?#id=737"),
+    ("FLEX", "https://www.nasa.gov/mission/station/research-explorer/investigation/?#id=463"),
+    ("FLEX-2", "https://www.nasa.gov/mission/station/research-explorer/investigation/?#id=841"),
+    ("CFI", "https://www.nasa.gov/mission/station/research-explorer/investigation/?#id=7543"),
+    ("ACME", "https://www.nasa.gov/mission/station/research-explorer/investigation/?#id=1651"),
+    ("SPICE", "https://www.nasa.gov/mission/station/research-explorer/investigation/?#id=756"),
+    ("SLICE", "https://www.nasa.gov/mission/station/research-explorer/investigation/?#id=850"),
+];
+
+fn extract_html_meta(html: &str, key: &str) -> Option<String> {
+    let lower = html.to_lowercase();
+    let needle = key.to_lowercase();
+    let idx = lower.find(&needle)?;
+    let window_start = idx.saturating_sub(120);
+    let window_end = (idx + 600).min(html.len());
+    let snippet = &html[window_start..window_end];
+    let lower_snip = snippet.to_lowercase();
+    let c_idx = lower_snip.find("content=")?;
+    let after = &snippet[c_idx + 8..];
+    let quote = after.chars().next()?;
+    if quote == '"' || quote == '\'' {
+        let end = after[1..].find(quote)?;
+        Some(html_unescape(&after[1..1 + end]))
+    } else {
+        None
+    }
+}
+
+fn extract_html_tag(html: &str, tag: &str) -> Option<String> {
+    let lower = html.to_lowercase();
+    let open = format!("<{}", tag.to_lowercase());
+    let close = format!("</{}>", tag.to_lowercase());
+    let start = lower.find(&open)?;
+    let gt = lower[start..].find('>')? + start + 1;
+    let end = lower[gt..].find(&close)? + gt;
+    Some(html_unescape(html[gt..end].trim()))
+}
+
+fn html_unescape(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
 }
 
 pub fn normalize_google_sheet_csv_url(url: &str) -> String {
