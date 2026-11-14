@@ -6,23 +6,26 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tracing::{info, warn};
 
-/// NTRS `q` supports `+required -excluded` tokens but NOT quoted phrases or field
-/// syntax (both silently return zero), so every query is a `+word` AND form whose
-/// required words are the experiment's real name or its most distinctive terms.
+/// Each query was verified against the live NTRS citations search API.
+/// That API honors single quoted phrases and `+required -excluded` tokens,
+/// but multi-phrase `A OR B` forms silently return zero results, so every
+/// entry is ONE quoted phrase (the experiment's real NTRS title wording) —
+/// or a `+word` AND form only where the phrase itself is absent from NTRS
+/// metadata (CFI papers are never titled "Cool Flames Investigation", etc.).
 pub const DEFAULT_PROGRAM_QUERIES: &[(&str, &str)] = &[
-    ("BASS", "+burning +suppression +solids -II"),
-    ("BASS-II", "+burning +suppression +solids +II"),
-    ("SAFFIRE I", "+saffire +I -II -III -IV -V -VI"),
-    ("SAFFIRE II", "+saffire +II"),
+    ("BASS", "\"Burning and Suppression of Solids\""),
+    ("BASS-II", "\"Burning and Suppression of Solids II\""),
+    ("SAFFIRE I", "\"Saffire I\""),
+    ("SAFFIRE II", "\"Saffire II\""),
     ("SAFFIRE III", "+saffire +III"),
-    ("SAME", "+smoke +aerosol +measurement +experiment"),
-    ("SAME-R", "+smoke +aerosol +reflight"),
-    ("FLEX", "+flame +extinguishment +droplet +experiment"),
+    ("SAME", "\"Smoke Aerosol Measurement Experiment\""),
+    ("SAME-R", "\"Smoke Aerosol Measurement Experiment\" reflight"),
+    ("FLEX", "\"Flame Extinguishment Experiment\" microgravity"),
     ("FLEX-2", "+flame +extinguishment +droplet +2"),
     ("CFI", "+cool +flames +droplet +microgravity"),
-    ("ACME", "+advanced +combustion +microgravity +experiments"),
-    ("SPICE", "+smoke +point +flame"),
-    ("SLICE", "+SLICE +flame"),
+    ("ACME", "\"Advanced Combustion via Microgravity Experiments\""),
+    ("SPICE", "\"Smoke Point In Co-flow Experiment\""),
+    ("SLICE", "\"Structure and Liftoff In Combustion Experiment\""),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
