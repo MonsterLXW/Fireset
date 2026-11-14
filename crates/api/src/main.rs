@@ -21,6 +21,7 @@ async fn main() -> anyhow::Result<()> {
     let pipeline = PipelineService::new(config.clone(), db.clone(), ai.clone())?;
     let rag = RagEngine::new(config.clone(), db.clone(), ai.clone());
 
+    let scan_limiter = api::rate_limit::ScanLimiter::new(config.scan_rate_limit_per_minute);
     let bind_addr = config.bind_addr.clone();
     let state = AppState {
         config,
@@ -28,6 +29,7 @@ async fn main() -> anyhow::Result<()> {
         ai,
         pipeline,
         rag,
+        scan_limiter,
     };
 
     let app = build_router(state);

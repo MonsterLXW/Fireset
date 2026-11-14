@@ -14,6 +14,8 @@ pub enum Error {
     NotFound(String),
     #[error("bad request: {0}")]
     BadRequest(String),
+    #[error("payload too large: {0}")]
+    PayloadTooLarge(String),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("io error: {0}")]
@@ -34,6 +36,7 @@ impl Error {
     pub fn status_code(&self) -> u16 {
         match self {
             Error::NotFound(_) => 404,
+            Error::PayloadTooLarge(_) => 413,
             Error::BadRequest(_) | Error::Csv(_) | Error::Config(_) => 400,
             Error::AiUnavailable(_) => 503,
             Error::AiProvider { status, .. } if *status >= 400 && *status < 500 => *status,

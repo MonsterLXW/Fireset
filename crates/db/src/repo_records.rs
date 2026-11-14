@@ -36,6 +36,10 @@ pub struct ConditionRow {
     pub confidence: f32,
     pub verification_status: String,
     pub correction_note: Option<String>,
+    pub outcome: String,
+    pub outcome_note: Option<String>,
+    pub outcome_source_page: Option<i32>,
+    pub outcome_source_quote: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -69,6 +73,8 @@ pub struct ConditionPatch {
     pub source_page: Option<i32>,
     pub verification_status: Option<String>,
     pub correction_note: Option<String>,
+    pub outcome: Option<String>,
+    pub outcome_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -239,8 +245,9 @@ impl Db {
                 "INSERT INTO conditions (
                     paper_id, experiment_id, fuel_type, fuel_geometry, oxygen_concentration,
                     pressure, airflow, sensors, objective, source_page, source_quote,
-                    provenance_kind, confidence, verification_status
-                 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending')",
+                    provenance_kind, confidence, verification_status,
+                    outcome, outcome_note, outcome_source_page, outcome_source_quote
+                 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending',$14,$15,$16,$17)",
             )
             .bind(paper_id)
             .bind(primary_experiment_id)
@@ -255,6 +262,10 @@ impl Db {
             .bind(&c.source_quote)
             .bind(prov)
             .bind(c.confidence)
+            .bind(c.outcome.clone().unwrap_or_else(|| "unknown".to_string()))
+            .bind(&c.outcome_note)
+            .bind(c.outcome_source_page)
+            .bind(&c.outcome_source_quote)
             .execute(&mut *tx)
             .await?;
         }
@@ -348,6 +359,8 @@ impl Db {
                 source_page = COALESCE($9, source_page),
                 verification_status = COALESCE($10, verification_status),
                 correction_note = COALESCE($11, correction_note),
+                outcome = COALESCE($12, outcome),
+                outcome_note = COALESCE($13, outcome_note),
                 updated_at = now()
              WHERE id = $1
              RETURNING *",
@@ -363,6 +376,8 @@ impl Db {
         .bind(patch.source_page)
         .bind(&patch.verification_status)
         .bind(&patch.correction_note)
+        .bind(&patch.outcome)
+        .bind(&patch.outcome_note)
         .fetch_optional(self.pool())
         .await?)
     }

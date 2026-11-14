@@ -5,6 +5,7 @@ use sqlx::PgPool;
 pub mod repo_chat;
 pub mod repo_chunks;
 pub mod repo_jobs;
+pub mod repo_materials;
 pub mod repo_papers;
 pub mod repo_records;
 pub mod repo_sheet;

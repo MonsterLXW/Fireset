@@ -5,7 +5,10 @@ use ntrs::{NtrsClient, DEFAULT_PROGRAM_QUERIES};
 use serde::Serialize;
 use serde_json::json;
 use shared::{
-    types::{ChatTurn, ExtractedCondition, ExtractedFinding, ExtractionResult, PageChunk, ProvenanceKind},
+    types::{
+        ChatTurn, ExtractedCondition, ExtractedFinding, ExtractionResult, PageChunk,
+        ProvenanceKind, CONDITION_OUTCOMES,
+    },
     AppConfig, Error, Result,
 };
 use std::path::Path;
@@ -260,7 +263,19 @@ Title: {}\
 Abstract: {}", paper.title, paper.r#abstract)
         } else {
             let mut acc = String::new();
-            for c in chunks.iter().take(12) {
+            // Sample evenly across the WHOLE document (up to 14 slots) instead
+            // of the first 12 chunks: long papers open with title/TOC/credits,
+            // and the test tables with actual results sit mid/late. Document
+            // order is preserved so the [PAGE N] markers stay readable.
+            let wanted = 14usize;
+            let n = chunks.len();
+            let idxs: Vec<usize> = if n <= wanted {
+                (0..n).collect()
+            } else {
+                (0..wanted).map(|k| k * n / wanted).collect()
+            };
+            for ci in idxs {
+                let c = &chunks[ci];
                 let p_label = match (c.page_start, c.page_end) {
                     (Some(s), Some(e)) if s != e => format!("[PAGES {s}-{e}]"),
                     (Some(s), _) => format!("[PAGE {s}]"),
@@ -289,7 +304,17 @@ CRITICAL RULES:
    - "unknown": explicitly noted as unmeasured or unknown.
 3. Every condition and finding MUST cite the exact 1-based `source_page` from the [PAGE N] markers and include a short verbatim `source_quote`.
 4. Classify each finding `category` into one of: "prevention", "detection", "suppression", or "other".
-5. Output ONLY valid JSON matching the exact schema below.
+5. For every condition, report the TEST OUTCOME exactly as the paper states it:
+   - "ignited": the fuel ignited (result stated, no sustained-flame claim made).
+   - "sustained_flame": flame grew or persisted after ignition.
+   - "self_extinguished": flame died out on its own without intervention.
+   - "no_ignition": the fuel did not ignite under the reported conditions.
+   - "unknown": the paper does not state what happened to this fuel in this test.
+   NEVER infer or extrapolate an outcome. If the paper is silent, use "unknown" with
+   outcome_note null. When an outcome IS stated, give `outcome_note` as one sentence in
+   the paper's own terms, and cite its own `outcome_source_page` and a short verbatim
+   `outcome_source_quote` from the [PAGE N] markers.
+6. Output ONLY valid JSON matching the exact schema below.
 
 Schema:
 {
@@ -303,6 +328,10 @@ Schema:
       "airflow": "string or null",
       "sensors": ["string"],
       "objective": "string or null",
+      "outcome": "ignited|sustained_flame|self_extinguished|no_ignition|unknown",
+      "outcome_note": "one sentence in the paper's own terms, or null",
+      "outcome_source_page": 1,
+      "outcome_source_quote": "verbatim quote from text, or null",
       "source_page": 1,
       "source_quote": "verbatim quote from text",
       "provenance": "reported",
@@ -334,13 +363,13 @@ Source Text:\
 
         let resp = self
             .ai
-            .complete(
+            .complete_no_think(
                 Some(system_prompt),
                 &[ChatTurn {
                     role: "user".to_string(),
                     content: user_prompt,
                 }],
-                2048,
+                6144,
                 0.1,
             )
             .await?;
@@ -605,6 +634,26 @@ pub fn validate_extraction(res: &mut ExtractionResult, max_pages: i32) {
             if p < 1 || p > upper_page {
                 c.source_page = None;
             }
+        }
+        // Outcomes: only the five known labels survive; anything else is
+        // downgraded to 'unknown' together with its note/quote (no inference).
+        let norm = c.outcome.as_deref().map(|o| o.trim().to_ascii_lowercase());
+        if norm.as_deref().is_some_and(|o| CONDITION_OUTCOMES.contains(&o)) {
+            c.outcome = norm;
+        } else {
+            c.outcome = Some("unknown".to_string());
+        }
+        if c.outcome.as_deref() != Some("unknown") {
+            if let Some(p) = c.outcome_source_page {
+                if p < 1 || p > upper_page {
+                    c.outcome_source_page = None;
+                    c.outcome_source_quote = None;
+                }
+            }
+        } else {
+            c.outcome_note = None;
+            c.outcome_source_page = None;
+            c.outcome_source_quote = None;
         }
         c.confidence = c.confidence.clamp(0.0, 1.0);
         if c.provenance == ProvenanceKind::Inferred && c.confidence > 0.65 {
