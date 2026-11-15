@@ -2,6 +2,7 @@ use shared::{Error, Result};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 
+pub mod repo_auth;
 pub mod repo_chat;
 pub mod repo_chunks;
 pub mod repo_jobs;

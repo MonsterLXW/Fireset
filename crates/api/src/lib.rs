@@ -29,6 +29,7 @@ use tower_http::trace::TraceLayer;
 use tracing::error;
 use uuid::Uuid;
 
+pub mod auth;
 pub mod materials;
 pub mod rate_limit;
 pub mod scan;
@@ -41,6 +42,8 @@ pub struct AppState {
     pub pipeline: PipelineService,
     pub rag: RagEngine,
     pub scan_limiter: rate_limit::ScanLimiter,
+    /// Login/signup attempts per email per minute.
+    pub auth_limiter: rate_limit::ScanLimiter,
 }
 
 pub struct ApiError(pub Error);
@@ -149,7 +152,17 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/papers/{paper_id}/extractions", get(get_paper_extractions))
         .layer(middleware::from_fn_with_state(state.clone(), require_bearer_auth));
 
+    // Accounts: outside the site-token middleware by design. /me and
+    // /logout authenticate with the caller's session token, checked in
+    // the handler. Signup/login are rate-limited per email.
+    let auth_routes = Router::new()
+        .route("/api/v1/auth/signup", post(auth::signup))
+        .route("/api/v1/auth/login", post(auth::login))
+        .route("/api/v1/auth/me", get(auth::me))
+        .route("/api/v1/auth/logout", post(auth::logout));
+
     Router::new()
+        .merge(auth_routes)
         .merge(protected)
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
         .layer(SetResponseHeaderLayer::if_not_present(

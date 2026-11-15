@@ -120,6 +120,16 @@ bridges cotton to paper); `tests` carry the condition fields plus `outcome`, `ou
 (`{fuel, note}` = `{material, why}`) is a **pointer to a different material** — that
 material's tests and outcome are never copied onto the unmatched one.
 
+### Accounts (`POST/GET /api/v1/auth/*`)
+
+Public routes (no site bearer token) backing the dashboard's Account page:
+`signup` (email + password ≥10 + optional name), `login`, `me`, `logout`.
+Passwords are argon2id-hashed; a login returns a random session token which
+the dashboard keeps in an HttpOnly cookie and replays as
+`Authorization: Bearer <session token>`. Only the token's SHA-256 is stored,
+sessions expire after 30 days, and `users`/`sessions` are invisible to the
+public read roles. Signup/login are rate-limited per email.
+
 ## Conditions: test outcomes
 
 `conditions.outcome` ∈ `ignited | sustained_flame | self_extinguished | no_ignition | unknown`

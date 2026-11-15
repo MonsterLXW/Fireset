@@ -28,6 +28,12 @@ pub enum Error {
     Csv(#[from] csv::Error),
     #[error("config error: {0}")]
     Config(String),
+    #[error("{0}")]
+    Unauthorized(String),
+    #[error("{0}")]
+    Conflict(String),
+    #[error("{0}")]
+    TooManyRequests(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -38,6 +44,9 @@ impl Error {
             Error::NotFound(_) => 404,
             Error::PayloadTooLarge(_) => 413,
             Error::BadRequest(_) | Error::Csv(_) | Error::Config(_) => 400,
+            Error::Unauthorized(_) => 401,
+            Error::Conflict(_) => 409,
+            Error::TooManyRequests(_) => 429,
             Error::AiUnavailable(_) => 503,
             Error::AiProvider { status, .. } if *status >= 400 && *status < 500 => *status,
             _ => 500,
