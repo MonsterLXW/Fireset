@@ -11,4 +11,5 @@ serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 tracing.workspace = true
+sha2 = "0.10"
 tokio.workspace = true

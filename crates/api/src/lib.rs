@@ -29,6 +29,11 @@ use tower_http::trace::TraceLayer;
 use tracing::error;
 use uuid::Uuid;
 
+pub mod auth;
+pub mod materials;
+pub mod rate_limit;
+pub mod scan;
+
 #[derive(Clone)]
 pub struct AppState {
     pub config: AppConfig,
@@ -36,6 +41,9 @@ pub struct AppState {
     pub ai: AiClient,
     pub pipeline: PipelineService,
     pub rag: RagEngine,
+    pub scan_limiter: rate_limit::ScanLimiter,
+    /// Login/signup attempts per email per minute.
+    pub auth_limiter: rate_limit::ScanLimiter,
 }
 
 pub struct ApiError(pub Error);
@@ -100,7 +108,21 @@ pub fn build_router(state: AppState) -> Router {
         .allow_methods([Method::GET, Method::POST, Method::PATCH])
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
 
+    // Burn Scan photo route: its own per-route body limit (above the global
+    // 2 MB JSON cap, sized for a 5 MB image plus multipart framing) and a
+    // per-token rate limit. Both run inside the bearer-auth layer below.
+    let scan_routes = Router::new()
+        .route("/api/v1/ai/scan", post(scan::ai_scan))
+        .route_layer(DefaultBodyLimit::max(scan::MAX_SCAN_BODY_BYTES))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::scan_rate_limit,
+        ));
+
     let protected = Router::new()
+        // Burn Scan: photo -> materials, and material -> NASA test outcomes
+        .merge(scan_routes)
+        .route("/api/v1/materials/match", post(materials::materials_match))
         // Provider diagnostics
         .route("/api/v1/ai/health", get(ai_health))
         .route("/api/v1/ai/models", get(ai_models))
@@ -130,7 +152,17 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/papers/{paper_id}/extractions", get(get_paper_extractions))
         .layer(middleware::from_fn_with_state(state.clone(), require_bearer_auth));
 
+    // Accounts: outside the site-token middleware by design. /me and
+    // /logout authenticate with the caller's session token, checked in
+    // the handler. Signup/login are rate-limited per email.
+    let auth_routes = Router::new()
+        .route("/api/v1/auth/signup", post(auth::signup))
+        .route("/api/v1/auth/login", post(auth::login))
+        .route("/api/v1/auth/me", get(auth::me))
+        .route("/api/v1/auth/logout", post(auth::logout));
+
     Router::new()
+        .merge(auth_routes)
         .merge(protected)
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
         .layer(SetResponseHeaderLayer::if_not_present(

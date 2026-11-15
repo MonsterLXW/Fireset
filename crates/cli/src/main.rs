@@ -163,6 +163,8 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&ans)?);
         }
         Commands::Serve => {
+            let scan_limiter = api::rate_limit::ScanLimiter::new(config.scan_rate_limit_per_minute);
+            let auth_limiter = api::rate_limit::ScanLimiter::new(6);
             let bind_addr = config.bind_addr.clone();
             let state = AppState {
                 config,
@@ -170,6 +172,8 @@ async fn main() -> anyhow::Result<()> {
                 ai,
                 pipeline,
                 rag,
+                scan_limiter,
+                auth_limiter,
             };
             let app = build_router(state);
             let listener = tokio::net::TcpListener::bind(&bind_addr).await?;

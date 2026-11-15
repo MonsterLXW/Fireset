@@ -69,15 +69,19 @@ impl AiClient {
     }
 
     fn anthropic_headers(&self) -> Result<HeaderMap> {
+        self.headers_for_key(&self.config.vllm_api_key, "VLLM_API_KEY")
+    }
+
+    fn headers_for_key(&self, api_key: &str, key_name: &str) -> Result<HeaderMap> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers.insert(
             "anthropic-version",
             HeaderValue::from_static("2023-06-01"),
         );
-        if !self.config.vllm_api_key.trim().is_empty() {
-            let key = HeaderValue::from_str(self.config.vllm_api_key.trim())
-                .map_err(|e| Error::Config(format!("invalid VLLM_API_KEY header: {e}")))?;
+        if !api_key.trim().is_empty() {
+            let key = HeaderValue::from_str(api_key.trim())
+                .map_err(|e| Error::Config(format!("invalid {key_name} header: {e}")))?;
             headers.insert("x-api-key", key);
         }
         Ok(headers)
@@ -171,7 +175,6 @@ impl AiClient {
         max_tokens: u32,
         temperature: f32,
     ) -> Result<MessagesResponse> {
-        let url = format!("{}/v1/messages", self.base_url());
         let msg_json: Vec<Value> = messages
             .iter()
             .map(|m| json!({ "role": m.role, "content": m.content }))
@@ -190,6 +193,119 @@ impl AiClient {
             }
         }
 
+        self.post_messages(
+            payload,
+            &self.config.vllm_base_url,
+            &self.config.vllm_api_key.clone(),
+            &self.config.vllm_model.clone(),
+            false,
+        )
+        .await
+    }
+
+    /// `complete` with the model's chain-of-thought switched off. Structured
+    /// JSON jobs (scientific extraction) use this: thinking would otherwise
+    /// consume the whole token budget and return no text.
+    pub async fn complete_no_think(
+        &self,
+        system: Option<&str>,
+        messages: &[ChatTurn],
+        max_tokens: u32,
+        temperature: f32,
+    ) -> Result<MessagesResponse> {
+        let msg_json: Vec<Value> = messages
+            .iter()
+            .map(|m| json!({ "role": m.role, "content": m.content }))
+            .collect();
+
+        let mut payload = json!({
+            "model": self.config.vllm_model,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": msg_json,
+            "stream": false
+        });
+        if let Some(sys) = system {
+            if !sys.trim().is_empty() {
+                payload["system"] = Value::String(sys.to_string());
+            }
+        }
+
+        self.post_messages(
+            payload,
+            &self.config.vllm_base_url,
+            &self.config.vllm_api_key.clone(),
+            &self.config.vllm_model.clone(),
+            true,
+        )
+        .await
+    }
+
+    /// Send one image (raw bytes, base64-encoded here and discarded after the
+    /// request) plus a text prompt to the configured vision model via
+    /// POST {VISION_BASE_URL|VLLM_BASE_URL}/v1/messages. Image bytes are never
+    /// written to logs or the AI call audit.
+    pub async fn complete_vision(
+        &self,
+        system: Option<&str>,
+        image_bytes: &[u8],
+        media_type: &str,
+        prompt: &str,
+        max_tokens: u32,
+        temperature: f32,
+    ) -> Result<MessagesResponse> {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
+
+        let user_content = json!([
+            { "type": "image",
+              "source": { "type": "base64", "media_type": media_type, "data": b64 } },
+            { "type": "text", "text": prompt }
+        ]);
+
+        let mut payload = json!({
+            "model": self.config.vision_model,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": [{ "role": "user", "content": user_content }],
+            "stream": false
+        });
+        if let Some(sys) = system {
+            if !sys.trim().is_empty() {
+                payload["system"] = Value::String(sys.to_string());
+            }
+        }
+
+        self.post_messages(
+            payload,
+            &self.config.vision_base_url.clone(),
+            &self.config.vision_api_key.clone(),
+            &self.config.vision_model.clone(),
+            true,
+        )
+        .await
+    }
+
+    /// Shared POST /v1/messages path with retry/backoff and audit (no payload
+    /// contents are ever audited, only status/token counts — image-safe).
+    /// `disable_thinking` sends `chat_template_kwargs.enable_thinking=false`,
+    /// the one switch this vLLM build honors; used for structured JSON calls
+    /// where a long chain-of-thought would blow the token budget and return
+    /// no text at all.
+    async fn post_messages(
+        &self,
+        mut payload: Value,
+        base_url: &str,
+        api_key: &str,
+        model: &str,
+        disable_thinking: bool,
+    ) -> Result<MessagesResponse> {
+        if disable_thinking {
+            payload["chat_template_kwargs"] = json!({ "enable_thinking": false });
+        }
+        let url = format!("{}/v1/messages", base_url.trim_end_matches('/'));
+        let headers = self.headers_for_key(api_key, "VISION_API_KEY")?;
+
         let mut last_err: Option<Error> = None;
         let max_attempts = self.config.vllm_max_retries.max(1);
 
@@ -198,7 +314,7 @@ impl AiClient {
             let resp = self
                 .http
                 .post(&url)
-                .headers(self.anthropic_headers()?)
+                .headers(headers.clone())
                 .json(&payload)
                 .send()
                 .await;
@@ -210,10 +326,10 @@ impl AiClient {
                     let body = r.text().await.unwrap_or_default();
 
                     if (200..300).contains(&status) {
-                        let parsed = parse_anthropic_message(&body, &self.config.vllm_model, latency_ms)?;
+                        let parsed = parse_anthropic_message(&body, model, latency_ms)?;
                         self.audit(
                             "messages",
-                            Some(&self.config.vllm_model),
+                            Some(model),
                             Some(status as i32),
                             true,
                             Some(parsed.input_tokens),
@@ -231,7 +347,7 @@ impl AiClient {
                     };
                     self.audit(
                         "messages",
-                        Some(&self.config.vllm_model),
+                        Some(model),
                         Some(status as i32),
                         false,
                         None,
@@ -251,7 +367,7 @@ impl AiClient {
                     let msg = e.to_string();
                     self.audit(
                         "messages",
-                        Some(&self.config.vllm_model),
+                        Some(model),
                         None,
                         false,
                         None,
@@ -266,12 +382,12 @@ impl AiClient {
 
             if attempt < max_attempts {
                 let backoff = Duration::from_millis(500 * (1 << (attempt - 1)));
-                warn!(attempt, ?backoff, "retrying vLLM /v1/messages call");
+                warn!(attempt, ?backoff, "retrying /v1/messages call");
                 tokio::time::sleep(backoff).await;
             }
         }
 
-        Err(last_err.unwrap_or_else(|| Error::AiUnavailable("vLLM request failed".into())))
+        Err(last_err.unwrap_or_else(|| Error::AiUnavailable("messages request failed".into())))
     }
 
     /// Stream text deltas from Anthropic Messages SSE (`POST /v1/messages` with `stream: true`).

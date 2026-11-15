@@ -72,7 +72,7 @@ impl RagEngine {
                 for c in self.db.conditions_for_experiment(exp.id).await?.into_iter().take(8) {
                     if let Some((ntrs_id, title)) = paper_map.get(&c.paper_id) {
                         let summary = format!(
-                            "[Structured Condition | {} | status={} | provenance={} | conf={:.2}] fuel={:?}, geometry={:?}, O2={:?}, pressure={:?}, airflow={:?}, sensors={}, objective={:?}",
+                            "[Structured Condition | {} | status={} | provenance={} | conf={:.2}] fuel={:?}, geometry={:?}, O2={:?}, pressure={:?}, airflow={:?}, sensors={}, objective={:?}, outcome={}{} | outcome_source_page={:?}",
                             exp.acronym,
                             c.verification_status,
                             c.provenance_kind,
@@ -83,7 +83,13 @@ impl RagEngine {
                             c.pressure,
                             c.airflow,
                             c.sensors.unwrap_or_default(),
-                            c.objective
+                            c.objective,
+                            c.outcome,
+                            c.outcome_note
+                                .as_deref()
+                                .map(|n| format!(" (paper's terms: {n})"))
+                                .unwrap_or_default(),
+                            c.outcome_source_page
                         );
                         evidence.push(Evidence {
                             paper_id: c.paper_id,

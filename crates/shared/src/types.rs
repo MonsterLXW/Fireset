@@ -36,9 +36,30 @@ pub struct ExtractedCondition {
     /// 1-based page in the source PDF, None if not determinable.
     pub source_page: Option<i32>,
     pub source_quote: Option<String>,
+    /// What happened to the fuel in this test: ignited | sustained_flame |
+    /// self_extinguished | no_ignition | unknown. None means the model did
+    /// not state one — stored as 'unknown'. Never inferred.
+    #[serde(default)]
+    pub outcome: Option<String>,
+    /// One sentence in the paper's own terms describing the result.
+    #[serde(default)]
+    pub outcome_note: Option<String>,
+    #[serde(default)]
+    pub outcome_source_page: Option<i32>,
+    #[serde(default)]
+    pub outcome_source_quote: Option<String>,
     pub provenance: ProvenanceKind,
     pub confidence: f32,
 }
+
+/// The five allowed outcome labels for a tested condition.
+pub const CONDITION_OUTCOMES: [&str; 5] = [
+    "ignited",
+    "sustained_flame",
+    "self_extinguished",
+    "no_ignition",
+    "unknown",
+];
 
 /// One extracted finding/claim.
 #[derive(Debug, Clone, Serialize, Deserialize)]

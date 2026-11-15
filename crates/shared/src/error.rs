@@ -14,6 +14,8 @@ pub enum Error {
     NotFound(String),
     #[error("bad request: {0}")]
     BadRequest(String),
+    #[error("payload too large: {0}")]
+    PayloadTooLarge(String),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("io error: {0}")]
@@ -26,6 +28,12 @@ pub enum Error {
     Csv(#[from] csv::Error),
     #[error("config error: {0}")]
     Config(String),
+    #[error("{0}")]
+    Unauthorized(String),
+    #[error("{0}")]
+    Conflict(String),
+    #[error("{0}")]
+    TooManyRequests(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -34,7 +42,11 @@ impl Error {
     pub fn status_code(&self) -> u16 {
         match self {
             Error::NotFound(_) => 404,
+            Error::PayloadTooLarge(_) => 413,
             Error::BadRequest(_) | Error::Csv(_) | Error::Config(_) => 400,
+            Error::Unauthorized(_) => 401,
+            Error::Conflict(_) => 409,
+            Error::TooManyRequests(_) => 429,
             Error::AiUnavailable(_) => 503,
             Error::AiProvider { status, .. } if *status >= 400 && *status < 500 => *status,
             _ => 500,
