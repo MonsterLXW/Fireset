@@ -114,7 +114,8 @@ Response: `{ "matches": [...], "results": [...] }` — the same array under both
 material: `match_kind` `exact` | `synonym` | `none`; `matched_fuel` is the fuel_type string
 in our data (or null); `fuels` lists every fuel_type spelling that is this material (the
 synonym expansion is symmetric one-hop: acrylic → PMMA + Acrylic, but cellulose never
-bridges cotton to paper); `tests` carry the condition fields plus `outcome`, `outcome_note`,
+bridges cotton to paper); `tests` carry the condition fields (the text `oxygen_concentration`,
+`pressure`, `airflow` and their six numeric fields, see "Conditions: numbers" below) plus `outcome`, `outcome_note`,
 `source_page`, `source_quote` and `verification_status` (`rejected` rows are excluded);
 `oxygen_percent` only orders tests by closeness. When `match_kind` is `none`, `closest`
 (`{fuel, note}` = `{material, why}`) is a **pointer to a different material** — that
@@ -151,6 +152,54 @@ curl -s -X POST http://localhost:8080/api/v1/ai/extract/batch \
 For a backfill run, pass explicit `{"paper_ids": ["<uuid>", ...]}` sections (8 at a time run
 well in parallel — disjoint ids mean the batches never race over paper selection) instead of
 one `limit: 44` request.
+
+## Conditions: numbers for oxygen, pressure and airflow
+
+`oxygen_concentration`, `pressure` and `airflow` are free text: the record of what the paper
+said. Migration `0005_numeric_conditions.sql` adds the same values as numbers in fixed units,
+so tests can be plotted and filtered (the dashboard's flammability map):
+
+| Columns | Unit | Read from |
+|---|---|---|
+| `oxygen_pct_min`, `oxygen_pct_max` | percent oxygen | `oxygen_concentration` |
+| `pressure_kpa_min`, `pressure_kpa_max` | kPa, absolute | `pressure` |
+| `airflow_cm_s_min`, `airflow_cm_s_max` | cm/s | `airflow` |
+
+All six are nullable `numeric`. A single value has min = max; a stated range has min < max.
+They are returned as JSON numbers (or `null`) everywhere conditions are returned:
+`POST /api/v1/materials/match` (on each test), `GET /api/v1/papers/{id}/extractions`,
+`PATCH /api/v1/conditions/{id}` and the extraction responses. No existing key or field changed.
+The public read roles can select them.
+
+The numbers come from one parser, `crates/db/src/units.rs`, never from the model:
+
+- **Oxygen:** `30%`, `21-40% O2`, `21 vol%`, `0.21 mole fraction`. In `21% O2 and 79% N2` only
+  the oxygen figure counts. A bare `0.17` has no unit and stays null.
+- **Pressure:** psi, psia, kPa, MPa, Pa, atm, bar, mbar, torr, mmHg, converted to kPa. Gauge
+  pressure (`psig`) is not absolute and stays null. `1 atm (101.3 kPa)` is one value.
+- **Airflow:** cm/s, mm/s, m/s, converted to cm/s. `quiescent` states no number and stays null.
+- **Null on purpose:** no unit, a bound (`below 16%`, `up to 30 cm/s`, `< 1 cm/s`), a value that
+  varied, or several separate conditions in one row (`15%, 18% and 21%`).
+- **Oxygen as a partial pressure** (`21.3 kPa O2`) is not a percentage. It becomes one only when
+  the same row states a single total pressure.
+
+Where they are filled:
+
+- **New extractions:** on insert, from the text the model returned (`replace_paper_extractions`).
+- **Corrections:** `PATCH /api/v1/conditions/{id}` re-reads all three when any of the three texts
+  is changed.
+- **Existing rows:** `fire-intel backfill-numeric`. It fills only columns that are still NULL, so
+  it can be run again at any time. `--dry-run` writes no rows and prints how many would be
+  filled and up to 20 texts it could not read.
+
+```sh
+cargo run -p cli -- backfill-numeric --dry-run
+cargo run -p cli -- backfill-numeric
+```
+
+Note that every `fire-intel` command, including `--dry-run`, connects through `Db::connect`,
+which applies pending migrations first. Against a database that does not have migration 5 yet,
+the dry run adds the six (empty) columns and then writes nothing else.
 
 ## Ground rules
 
