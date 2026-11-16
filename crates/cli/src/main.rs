@@ -65,6 +65,13 @@ enum Commands {
         #[arg(long, default_value_t = 8)]
         top_k: usize,
     },
+    /// Fill the numeric oxygen / pressure / airflow columns on existing conditions from
+    /// their text. Only NULL columns are filled, so it is safe to run again.
+    BackfillNumeric {
+        /// Write nothing: print how many rows would be filled and text that could not be read
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Start the Axum HTTP API server
     Serve,
 }
@@ -119,6 +126,28 @@ async fn main() -> anyhow::Result<()> {
                 summary.processed = pipeline.run_worker_until_empty(process_jobs).await?;
             }
             println!("{}", serde_json::to_string_pretty(&summary)?);
+        }
+        Commands::BackfillNumeric { dry_run } => {
+            let report = db.backfill_numeric_conditions(dry_run).await?;
+            println!("{} over {} conditions", if dry_run { "DRY RUN (nothing written)" } else { "Backfill" }, report.rows);
+            println!("  rows {}: {}", if dry_run { "that would be filled" } else { "to fill" }, report.rows_to_fill);
+            if !dry_run {
+                println!("  rows updated: {}", report.rows_updated);
+            }
+            for (name, unit, c) in [("oxygen", "percent", &report.oxygen), ("pressure", "kPa", &report.pressure), ("airflow", "cm/s", &report.airflow)] {
+                println!(
+                    "  {name} ({unit}): {} rows have text, {} readable, {} already filled, {} {}",
+                    c.with_text,
+                    c.readable,
+                    c.already_filled,
+                    c.to_fill,
+                    if dry_run { "would be filled" } else { "filled" },
+                );
+            }
+            println!("  text that could not be read: {} distinct, showing {}", report.unreadable_distinct, report.unreadable.len());
+            for u in &report.unreadable {
+                println!("    [{}] {:?}  ({} row{})", u.column, u.text, u.rows, if u.rows == 1 { "" } else { "s" });
+            }
         }
         Commands::Worker { max_jobs } => {
             let ran = pipeline.run_worker_until_empty(max_jobs).await?;

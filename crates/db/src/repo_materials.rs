@@ -14,6 +14,14 @@ pub struct MatchedTest {
     pub oxygen_concentration: Option<String>,
     pub pressure: Option<String>,
     pub airflow: Option<String>,
+    /// The three text fields above as numbers (percent oxygen, kPa, cm/s), read by
+    /// `units.rs`. A single value has min == max; null when it could not be read.
+    pub oxygen_pct_min: Option<f64>,
+    pub oxygen_pct_max: Option<f64>,
+    pub pressure_kpa_min: Option<f64>,
+    pub pressure_kpa_max: Option<f64>,
+    pub airflow_cm_s_min: Option<f64>,
+    pub airflow_cm_s_max: Option<f64>,
     pub outcome: String,
     pub outcome_note: Option<String>,
     pub source_page: Option<i32>,
@@ -159,6 +167,9 @@ impl Db {
         let rows: Vec<MatchedTest> = sqlx::query_as(
             "SELECT c.id AS condition_id, c.paper_id, p.ntrs_id, p.title,
                     c.oxygen_concentration, c.pressure, c.airflow,
+                    c.oxygen_pct_min::float8 AS oxygen_pct_min, c.oxygen_pct_max::float8 AS oxygen_pct_max,
+                    c.pressure_kpa_min::float8 AS pressure_kpa_min, c.pressure_kpa_max::float8 AS pressure_kpa_max,
+                    c.airflow_cm_s_min::float8 AS airflow_cm_s_min, c.airflow_cm_s_max::float8 AS airflow_cm_s_max,
                     c.outcome, c.outcome_note, c.source_page, c.source_quote,
                     c.verification_status
              FROM conditions c

@@ -1,7 +1,8 @@
-use crate::Db;
+use crate::{units, Db};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use shared::{types::{ExtractedCondition, ExtractedFinding}, Result};
+use sqlx::types::Decimal;
 use sqlx::FromRow;
 use uuid::Uuid;
 
@@ -40,8 +41,31 @@ pub struct ConditionRow {
     pub outcome_note: Option<String>,
     pub outcome_source_page: Option<i32>,
     pub outcome_source_quote: Option<String>,
+    /// Oxygen (percent), pressure (kPa) and airflow (cm/s) as numbers, read from the three
+    /// text columns above by `units.rs`. A single value has min == max. None when the paper
+    /// did not state it or the text could not be read as one value or range.
+    #[serde(serialize_with = "as_number")]
+    pub oxygen_pct_min: Option<Decimal>,
+    #[serde(serialize_with = "as_number")]
+    pub oxygen_pct_max: Option<Decimal>,
+    #[serde(serialize_with = "as_number")]
+    pub pressure_kpa_min: Option<Decimal>,
+    #[serde(serialize_with = "as_number")]
+    pub pressure_kpa_max: Option<Decimal>,
+    #[serde(serialize_with = "as_number")]
+    pub airflow_cm_s_min: Option<Decimal>,
+    #[serde(serialize_with = "as_number")]
+    pub airflow_cm_s_max: Option<Decimal>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// The numeric columns go out as JSON numbers (or null), not as decimal strings.
+fn as_number<S: serde::Serializer>(value: &Option<Decimal>, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+    match value.as_ref().and_then(|d| d.to_string().parse::<f64>().ok()) {
+        Some(n) => serializer.serialize_f64(n),
+        None => serializer.serialize_none(),
+    }
 }
 
 #[derive(Debug, Clone, FromRow, Serialize)]
@@ -241,13 +265,20 @@ impl Db {
                 .and_then(|v| v.as_str().map(String::from))
                 .unwrap_or_else(|| "extracted".to_string());
             let sensors_json = serde_json::to_value(&c.sensors)?;
+            // The numeric columns come from the parser reading the stored text, never from
+            // numbers the model worked out.
+            let n = units::parse_condition(c.oxygen_concentration.as_deref(), c.pressure.as_deref(), c.airflow.as_deref());
             sqlx::query(
                 "INSERT INTO conditions (
                     paper_id, experiment_id, fuel_type, fuel_geometry, oxygen_concentration,
                     pressure, airflow, sensors, objective, source_page, source_quote,
                     provenance_kind, confidence, verification_status,
-                    outcome, outcome_note, outcome_source_page, outcome_source_quote
-                 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending',$14,$15,$16,$17)",
+                    outcome, outcome_note, outcome_source_page, outcome_source_quote,
+                    oxygen_pct_min, oxygen_pct_max, pressure_kpa_min, pressure_kpa_max,
+                    airflow_cm_s_min, airflow_cm_s_max
+                 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending',$14,$15,$16,$17,
+                           ($18::float8)::numeric, ($19::float8)::numeric, ($20::float8)::numeric,
+                           ($21::float8)::numeric, ($22::float8)::numeric, ($23::float8)::numeric)",
             )
             .bind(paper_id)
             .bind(primary_experiment_id)
@@ -266,6 +297,12 @@ impl Db {
             .bind(&c.outcome_note)
             .bind(c.outcome_source_page)
             .bind(&c.outcome_source_quote)
+            .bind(n.oxygen_pct.map(|r| r.min))
+            .bind(n.oxygen_pct.map(|r| r.max))
+            .bind(n.pressure_kpa.map(|r| r.min))
+            .bind(n.pressure_kpa.map(|r| r.max))
+            .bind(n.airflow_cm_s.map(|r| r.min))
+            .bind(n.airflow_cm_s.map(|r| r.max))
             .execute(&mut *tx)
             .await?;
         }
@@ -347,7 +384,7 @@ impl Db {
     }
 
     pub async fn update_condition(&self, id: Uuid, patch: &ConditionPatch) -> Result<Option<ConditionRow>> {
-        Ok(sqlx::query_as::<_, ConditionRow>(
+        let updated = sqlx::query_as::<_, ConditionRow>(
             "UPDATE conditions SET
                 fuel_type = COALESCE($2, fuel_type),
                 fuel_geometry = COALESCE($3, fuel_geometry),
@@ -378,6 +415,31 @@ impl Db {
         .bind(&patch.correction_note)
         .bind(&patch.outcome)
         .bind(&patch.outcome_note)
+        .fetch_optional(self.pool())
+        .await?;
+        // A corrected oxygen, pressure or airflow text changes what the numbers should be:
+        // read all three again from the row as it now stands.
+        let touched = patch.oxygen_concentration.is_some() || patch.pressure.is_some() || patch.airflow.is_some();
+        let Some(row) = updated else { return Ok(None) };
+        if !touched {
+            return Ok(Some(row));
+        }
+        let n = units::parse_condition(row.oxygen_concentration.as_deref(), row.pressure.as_deref(), row.airflow.as_deref());
+        Ok(sqlx::query_as::<_, ConditionRow>(
+            "UPDATE conditions SET
+                oxygen_pct_min = ($2::float8)::numeric, oxygen_pct_max = ($3::float8)::numeric,
+                pressure_kpa_min = ($4::float8)::numeric, pressure_kpa_max = ($5::float8)::numeric,
+                airflow_cm_s_min = ($6::float8)::numeric, airflow_cm_s_max = ($7::float8)::numeric
+             WHERE id = $1
+             RETURNING *",
+        )
+        .bind(id)
+        .bind(n.oxygen_pct.map(|r| r.min))
+        .bind(n.oxygen_pct.map(|r| r.max))
+        .bind(n.pressure_kpa.map(|r| r.min))
+        .bind(n.pressure_kpa.map(|r| r.max))
+        .bind(n.airflow_cm_s.map(|r| r.min))
+        .bind(n.airflow_cm_s.map(|r| r.max))
         .fetch_optional(self.pool())
         .await?)
     }
